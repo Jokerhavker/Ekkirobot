@@ -133,7 +133,6 @@ async function handleMessage(message: any, token: string) {
       let targetName = message.reply_to_message?.from?.first_name || "User";
 
       // If not a reply, check for mention entities (basic implementation)
-      // For robust implementation, parsing entities is needed. We'll stick to reply for safety.
       
       if (targetId) {
         const action = modCommand[0]; // kick, ban, or mute
@@ -216,16 +215,16 @@ async function handleMessage(message: any, token: string) {
     - Keep replies concise for Telegram.
     `;
     
-    // CORRECT usage of generateContent
-    const response = await ai.models.generateContent({ 
-        model: 'gemini-2.5-flash',
-        contents: [{ role: 'user', parts: [{ text }] }],
-        config: {
-          systemInstruction: systemPrompt
-        }
+    // Updated to use ai.models.generateContent properly
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: [{ role: 'user', parts: [{ text }] }],
+      config: {
+        systemInstruction: systemPrompt
+      }
     });
 
-    const reply = response.text; // Access text directly property
+    const reply = response.text; // Access text property directly
     
     // Log AI Response to DB
     const dbClient = await connectToDatabase();

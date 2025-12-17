@@ -1,10 +1,11 @@
+
 /**
  * FILE: api/telegram-webhook.ts
  * 
- * Ekki Bot v2.1 - Smart AI with Hindi Moderation & Sassy Permissions
+ * Ekki Bot v2.2 - Advanced AI with Reliable Reply Logic & Chill Safety Filters
  */
 
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { MongoClient } from "mongodb";
 
 const MAX_EXECUTION_TIME = 9000;
@@ -35,7 +36,7 @@ export default async function handler(req: any, res: any) {
     } 
     return res.status(200).send('OK');
   } catch (e) {
-    console.error("Webhook main handler error:", e);
+    console.error("Webhook error:", e);
     return res.status(200).send('Error');
   }
 }
@@ -44,138 +45,126 @@ async function handleMessage(message: any, token: string) {
   const chatId = message.chat.id;
   const text = message.text || '';
   const user = message.from;
-  const botUsername = (process.env.BOT_USERNAME || 'ekkirobot').toLowerCase().replace('@', '');
   const ownerId = Number(process.env.OWNER_ID) || 0;
   const isGroup = message.chat.type === 'group' || message.chat.type === 'supergroup';
 
-  // 1. Detection Logic
-  // Check if replying to the bot (either by username or generic bot check as fallback)
-  const isReplyToBot = message.reply_to_message && (
-    (message.reply_to_message.from.username && message.reply_to_message.from.username.toLowerCase() === botUsername) ||
-    message.reply_to_message.from.is_bot === true
-  );
+  // 1. Fetch Bot Info for reliable detection
+  const botInfoRes = await fetch(`https://api.telegram.org/bot${token}/getMe`);
+  const botInfo = await botInfoRes.json();
+  if (!botInfo.ok) return;
   
-  const nameTrigger = /\b(ekki|eki|akki)\b/i.test(text);
-  const isMentioned = text.includes(`@${botUsername}`);
-  
-  // Ekki replies if: it's a private chat OR named/tagged OR someone replied to her
-  const shouldReply = !isGroup || nameTrigger || isMentioned || isReplyToBot;
+  const botId = botInfo.result.id;
+  const botUsername = botInfo.result.username.toLowerCase();
 
-  // 2. Professional Commands
+  // 2. Precise Detection Logic
+  const isReplyToMe = message.reply_to_message && message.reply_to_message.from.id === botId;
+  const nameTrigger = /\b(ekki|eki|akki)\b/i.test(text);
+  const isMentioned = text.toLowerCase().includes(`@${botUsername}`);
+  
+  // Ekki replies if: Private Chat OR Named OR Mentioned OR Replied To
+  const shouldReply = !isGroup || nameTrigger || isMentioned || isReplyToMe;
+
+  // 3. Command Logic
   if (text.startsWith('/start')) {
     const startMsg = `✨ *Ekki Bot Interface* ✨\n\n` +
       `Namaste *${user.first_name}*! 🙏\n\n` +
-      `Main hoon Ekki, aapki personal Hinglish AI assistant. Main baatein kar sakti hoon aur aapke group ko handle bhi kar sakti hoon!\n\n` +
-      `🚀 *Main kya kar sakti hoon?*\n` +
-      `• *AI Chitchat*: Tag karke ya reply karke kuch bhi pucho.\n` +
-      `• *Group Control*: Hindi commands se kick, mute ya admin banao.\n` +
-      `• *Smart Management*: Group safety aur moderation.\n\n` +
-      `🛠 *Developed by*: @A1blackhats\n\n` +
-      `Tag me or just reply to start chatting!`;
+      `I'm Ekki, your friendly Hinglish AI assistant. I can chat, manage groups, and keep things spicy!\n\n` +
+      `🚀 *Quick Tips:* \n` +
+      `• *Chat*: Just tag me or reply to my message.\n` +
+      `• *Admin*: I understand Hindi commands for kick/mute/admin.\n\n` +
+      `🛠 *Dev:* @A1blackhats`;
     await sendMessage(chatId, startMsg, token, message.message_id);
     return;
   }
 
   if (text.startsWith('/help')) {
     const helpMsg = `📖 *Ekki Help Menu*\n\n` +
-      `*Interacting with me:*\n` +
-      `• Tag me: \`@${botUsername} kaise ho?\` \n` +
-      `• Reply to me: Just reply to my message! \n\n` +
-      `*Admin Commands (Hindi/English):*\n` +
-      `• **Kick**: Reply and say "nikal do"\n` +
-      `• **Mute**: Reply and say "muh band kardo"\n` +
-      `• **Admin**: Reply and say "admin bnado"\n\n` +
-      `⚠️ *Note*: Moderation commands work only for group admins!`;
+      `*Talk to me:*\n` +
+      `• \`@${botUsername} hello\` \n` +
+      `• Or just reply to me!\n\n` +
+      `*Admin Powers (Hindi):*\n` +
+      `• **Kick**: Reply with "nikal do"\n` +
+      `• **Mute**: Reply with "iska muh bnd krdo"\n` +
+      `• **Admin**: Reply with "admin bnado"\n\n` +
+      `Only admins can use moderation features! 😎`;
     await sendMessage(chatId, helpMsg, token, message.message_id);
     return;
   }
 
-  // 3. Natural Language Moderation Detection
+  // 4. Hindi Moderation Logic
   const isTargetingUser = !!message.reply_to_message;
-  const kickRegex = /(nikal|bhaga|ban|kick|terminate|grouk)/i; // Added 'grouk' as seen in user request
+  const kickRegex = /(nikal|bhaga|ban|kick|terminate|grouk)/i;
   const muteRegex = /(muh bnd|muh band|chup|shant|mute|silent)/i;
   const adminRegex = /(admin bnado|admin banado|make admin|promote|mod)/i;
 
-  let detectedAction: 'kick' | 'mute' | 'admin' | null = null;
-  if (kickRegex.test(text)) detectedAction = 'kick';
-  else if (muteRegex.test(text)) detectedAction = 'mute';
-  else if (adminRegex.test(text)) detectedAction = 'admin';
+  let action: 'kick' | 'mute' | 'admin' | null = null;
+  if (kickRegex.test(text)) action = 'kick';
+  else if (muteRegex.test(text)) action = 'mute';
+  else if (adminRegex.test(text)) action = 'admin';
 
-  if (detectedAction && shouldReply) {
+  if (action && shouldReply) {
     if (!isTargetingUser) {
-      await sendMessage(chatId, "Babu, kiske upar action lena hai? Uske message par reply karke bolo! 😅", token, message.message_id);
+      await sendMessage(chatId, "Babu, kiske upar action lena hai? Reply karke bolo! 😅", token, message.message_id);
       return;
     }
 
-    // Permission Check: User
     const isAdmin = await checkIsAdmin(chatId, user.id, token, ownerId);
     if (!isAdmin) {
       await sendMessage(chatId, "tu jyada mat bhok, khudko admin samjha h kya? 💅", token, message.message_id);
       return;
     }
 
-    // Permission Check: Bot
-    const botIdRes = await fetch(`https://api.telegram.org/bot${token}/getMe`);
-    const botIdData = await botIdRes.json();
-    const isBotAdmin = await checkIsAdmin(chatId, botIdData.result.id, token, -1);
-    
+    const isBotAdmin = await checkIsAdmin(chatId, botId, token, -1);
     if (!isBotAdmin) {
-        await sendMessage(chatId, "Mujhe pehle Admin toh banao! Mere paas powers nahi hain. 🥺", token, message.message_id);
-        return;
+      await sendMessage(chatId, "Mujhe pehle Admin toh banao! Mere paas powers nahi hain. 🥺", token, message.message_id);
+      return;
     }
 
-    await handleModeration(chatId, message, detectedAction, token);
+    await handleModeration(chatId, message, action, token);
     return;
   }
 
-  // 4. AI Chat Handling
+  // 5. AI Response
   if (shouldReply) {
     await sendChatAction(chatId, 'typing', token);
     await handleAIResponse(chatId, text, user.first_name, token, message.message_id);
   }
 
-  // Database Logging
   logActivity(chatId, user, text, isGroup).catch(() => {});
 }
 
 async function handleAIResponse(chatId: number, text: string, userName: string, token: string, replyToId: number) {
-  const apiKey = process.env.API_KEY;
-  if (!apiKey) {
-    await sendMessage(chatId, "⚠️ Config Error: `API_KEY` missing.", token, replyToId);
-    return;
-  }
-
   try {
-    const ai = new GoogleGenAI({ apiKey });
-    const systemPrompt = `You are Ekki (@ekkirobot), a sassy, witty, and friendly Indian AI girl.
-    - User: ${userName}
-    - Style: Hinglish (Hindi + English), bubbly, slightly sassy if users are rude or stupid.
-    - Personal traits: You use emojis like 💅, ✨, 🙄, 😇. You speak like a modern Gen-Z Indian girl.
-    - Context: You are in a Telegram group chat.
-    - Goal: Reply concisely (1-2 lines) and always stay in character.
-    - Rules: Never break character. Never mention you are an AI unless asked.`;
+    // Correctly initialize GoogleGenAI with the API key from environment variables
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const systemPrompt = `You are Ekki (@ekkirobot), a sassy, smart, and friendly Indian girl AI.
+    - Style: Hinglish, bubbly, Gen-Z vibes.
+    - Owner: Ayush Sharma (@A1blackhats).
+    - Traits: Use emojis (💅, ✨, 🙄). Always be helpful but keep that "desi girl" attitude.
+    - Rule: Keep it short and always reply as if you're talking directly to the person.`;
 
-    const apiCall = ai.models.generateContent({
+    const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview', 
       contents: [{ role: 'user', parts: [{ text }] }],
-      config: { systemInstruction: systemPrompt }
+      config: { 
+        systemInstruction: systemPrompt,
+        // Use HarmCategory and HarmBlockThreshold enums to resolve type assignment errors
+        safetySettings: [
+          { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+          { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+          { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+          { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+        ]
+      }
     });
-
-    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("AI_TIMEOUT")), 7000));
-    const response: any = await Promise.race([apiCall, timeoutPromise]);
     
-    const candidate = response.candidates?.[0];
-    if (candidate?.finishReason === 'SAFETY') {
-      await sendMessage(chatId, "Uff! Thoda tameez se baat karo, main aisi baatein nahi karti. 🙄", token, replyToId);
-      return;
-    }
-
-    let reply = response.text || "Main thoda confuse ho gayi... (I'm a bit confused)";
+    // Extract text directly from the response object
+    let reply = response.text || "Main thoda confuse ho gayi... Phirse bolo? 🤔";
     await sendMessage(chatId, reply, token, replyToId);
 
   } catch (error: any) {
-    console.error("AI Error:", error);
-    await sendMessage(chatId, "Arre yaar, brain freeze ho gaya! Phir se bolo? 😵", token, replyToId);
+    console.error("AI Generation Error:", error);
+    await sendMessage(chatId, "Ofo! Brain freeze ho gaya. Phirse try karo? 😵", token, replyToId);
   }
 }
 
@@ -192,29 +181,11 @@ async function handleModeration(chatId: number, message: any, action: 'kick' | '
       body.revoke_messages = true;
     } else if (action === 'mute') {
       endpoint = 'restrictChatMember';
-      body.permissions = { 
-          can_send_messages: false,
-          can_send_audios: false,
-          can_send_documents: false,
-          can_send_photos: false,
-          can_send_videos: false,
-          can_send_video_notes: false,
-          can_send_voice_notes: false,
-          can_send_polls: false,
-          can_send_other_messages: false,
-          can_add_web_page_previews: false
-      };
-      body.until_date = Math.floor(Date.now() / 1000) + 300; // 5 mins
+      body.permissions = { can_send_messages: false };
+      body.until_date = Math.floor(Date.now() / 1000) + 300; 
     } else if (action === 'admin') {
       endpoint = 'promoteChatMember';
-      body.can_manage_chat = true;
-      body.can_post_messages = true;
-      body.can_edit_messages = true;
-      body.can_delete_messages = true;
-      body.can_invite_users = true;
-      body.can_restrict_members = true;
-      body.can_pin_messages = true;
-      body.can_promote_members = false;
+      body = { ...body, can_manage_chat: true, can_delete_messages: true, can_restrict_members: true, can_invite_users: true, can_promote_members: false };
     }
 
     const res = await fetch(`https://api.telegram.org/bot${token}/${endpoint}`, {
@@ -223,39 +194,31 @@ async function handleModeration(chatId: number, message: any, action: 'kick' | '
       body: JSON.stringify(body)
     });
     
-    const resData = await res.json();
-    if (resData.ok) {
-      const successMsg = action === 'kick' ? `Tadaa! ${targetName} ko nikal diya. 😎` :
-                         action === 'mute' ? `${targetName} ka muh 5 min ke liye band! 🤐` :
-                         `Badhai ho! ${targetName} ab Naya Admin hai. 👑`;
-      await sendMessage(chatId, successMsg, token, message.message_id);
+    const data = await res.json();
+    if (data.ok) {
+      const msg = action === 'kick' ? `Bye bye ${targetName}! 👋` : 
+                  action === 'mute' ? `${targetName} ka muh 5 min ke liye band. 🤐` : 
+                  `${targetName} ab humare naye Admin hain! 👑`;
+      await sendMessage(chatId, msg, token, message.message_id);
     } else {
-      await sendMessage(chatId, `Arre! Error: ${resData.description}`, token, message.message_id);
+      await sendMessage(chatId, `Arre! Telegram ne mana kar diya: ${data.description}`, token, message.message_id);
     }
   } catch (e) {
-    await sendMessage(chatId, "Action fail ho gaya. Admin se bolo mujhe powers check karein! 🛠", token, message.message_id);
+    await sendMessage(chatId, "Action fail ho gaya. Power check karo meri! 🛠", token, message.message_id);
   }
 }
 
 async function sendMessage(chatId: number | string, text: string, token: string, replyToId?: number) {
   try {
-    const body: any = { 
-      chat_id: chatId, 
-      text, 
-      parse_mode: 'Markdown'
-    };
-    // Every time she speaks in a group, we reply to the message that triggered her
-    if (replyToId) {
-      body.reply_parameters = { message_id: replyToId };
-    }
+    const payload: any = { chat_id: chatId, text, parse_mode: 'Markdown' };
+    if (replyToId) payload.reply_parameters = { message_id: replyToId };
+    
     await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
+      body: JSON.stringify(payload)
     });
-  } catch (e) {
-    console.error("SendMessage error:", e);
-  }
+  } catch (e) {}
 }
 
 async function sendChatAction(chatId: number | string, action: string, token: string) {
@@ -285,11 +248,9 @@ async function logActivity(chatId: number, user: any, text: string, isGroup: boo
   const dbClient = await connectToDatabase();
   if (!dbClient) return;
   const db = dbClient.db('ekki_bot_db');
-  const timestamp = new Date();
   await db.collection('users').updateOne(
     { telegramId: user.id },
-    { $set: { username: user.username, firstName: user.first_name, lastSeen: timestamp } },
+    { $set: { username: user.username, firstName: user.first_name, lastSeen: new Date() } },
     { upsert: true }
   );
-  await db.collection('logs').insertOne({ chatId, userId: user.id, text, timestamp });
 }

@@ -1,3 +1,4 @@
+
 import { GoogleGenAI } from "@google/genai";
 
 const apiKey = process.env.API_KEY;
@@ -33,7 +34,8 @@ export default async function handler(req: any, res: any) {
   try {
     const { message, history } = req.body;
     
-    const ai = new GoogleGenAI({ apiKey });
+    // Always use the recommended initialization with named parameter and direct process.env access
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     
     const systemInstruction = `
     You are Ekki (username @ekkirobot), a polite and friendly girl AI assistant for a Telegram group.
@@ -44,8 +46,9 @@ export default async function handler(req: any, res: any) {
     - Keep responses concise.
     `;
 
+    // Use gemini-3-flash-preview for basic text tasks as per guidelines
     const chat = ai.chats.create({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-3-flash-preview',
       config: {
         systemInstruction,
         temperature: 0.9,
@@ -55,6 +58,7 @@ export default async function handler(req: any, res: any) {
     });
 
     const result = await chat.sendMessage({ message });
+    // result.text is a property, not a method, as per guidelines
     return res.status(200).json({ text: result.text });
 
   } catch (error: any) {

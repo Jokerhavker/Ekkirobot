@@ -1,8 +1,4 @@
 
-import { GoogleGenAI } from "@google/genai";
-
-const apiKey = process.env.API_KEY;
-
 export default async function handler(req: any, res: any) {
   // CORS Headers
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -17,7 +13,7 @@ export default async function handler(req: any, res: any) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  // Auth Check
+  const groqApiKey = process.env.GROQ_API_KEY;
   const adminKey = req.headers['x-admin-key'];
   const envOwnerId = process.env.OWNER_ID;
   const providedKey = Array.isArray(adminKey) ? adminKey[0] : adminKey;
@@ -26,40 +22,47 @@ export default async function handler(req: any, res: any) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  if (!apiKey) {
-    console.error("API_KEY missing in server environment");
-    return res.status(500).json({ error: 'Server Config Error: API_KEY is missing.' });
+  if (!groqApiKey) {
+    return res.status(500).json({ error: 'Server Config Error: GROQ_API_KEY is missing.' });
   }
 
   try {
     const { message, history } = req.body;
-    
-    // Always use the recommended initialization with named parameter and direct process.env access
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    
-    const systemInstruction = `
-    You are Ekki (username @ekkirobot), a polite and friendly girl AI assistant for a Telegram group.
-    - You were made by @A1blackhats.
-    - Your primary language style is Hinglish (a mix of Hindi and English).
-    - Tone: Casual, polite, slightly playful, like a helpful friend.
-    - Context: This is a Live Chat Demo in the Admin Panel.
-    - Keep responses concise.
-    `;
 
-    // Use gemini-3-flash-preview for basic text tasks as per guidelines
-    const chat = ai.chats.create({
-      model: 'gemini-3-flash-preview',
-      config: {
-        systemInstruction,
-        temperature: 0.9,
-        maxOutputTokens: 200,
+    // Convert history format if necessary (Telegram uses role: model, Groq uses role: assistant)
+    const messages = [
+      {
+        role: "system",
+        content: "You are Ekki (@ekkirobot), a sassy, smart, and friendly Indian girl AI. You speak Hinglish (mix of Hindi/English). Be bubbly, use emojis, and avoid being overly formal. You are not a regular AI; you are Ekki."
       },
-      history: history || []
+      ...(history || []).map((h: any) => ({
+        role: h.role === 'model' ? 'assistant' : 'user',
+        content: typeof h.parts?.[0]?.text === 'string' ? h.parts[0].text : h.text
+      })),
+      { role: "user", content: message }
+    ];
+
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${groqApiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: "llama-3.3-70b-versatile",
+        messages: messages,
+        temperature: 0.9,
+        max_tokens: 500
+      })
     });
 
-    const result = await chat.sendMessage({ message });
-    // result.text is a property, not a method, as per guidelines
-    return res.status(200).json({ text: result.text });
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.error?.message || 'Groq API Error');
+    }
+
+    return res.status(200).json({ text: data.choices[0].message.content });
 
   } catch (error: any) {
     console.error("Chat API Error:", error);

@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Dashboard } from './components/Dashboard';
@@ -46,7 +47,6 @@ export default function App() {
         setWebhookMsg('Webhook successfully connected!');
       } else {
         setWebhookStatus('error');
-        // Prefer specific error from backend, then Telegram description, then generic
         setWebhookMsg(data.error || data.description || 'Failed to set webhook');
       }
     } catch (e) {
@@ -85,7 +85,7 @@ export default function App() {
             </button>
           </form>
           <div className="mt-6 text-center text-xs text-slate-600">
-            Powered by Google Gemini • Vercel Host Ready
+            Powered by Groq Llama 3 • Vercel Host Ready
           </div>
         </div>
       </div>
@@ -129,7 +129,7 @@ export default function App() {
           </div>
           <div className="flex items-center space-x-2 bg-green-900/20 text-green-400 px-3 py-1 rounded-full text-xs font-bold border border-green-900/30">
             <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-            <span>Bot Active</span>
+            <span>Groq Engine Active</span>
           </div>
         </header>
 
@@ -140,7 +140,6 @@ export default function App() {
           {activeTab === 'users' && <UserManager ownerId={ownerId} />}
           {activeTab === 'settings' && (
             <div className="space-y-6">
-              {/* Connection Panel */}
               <div className="bg-slate-800 p-8 rounded-xl border border-slate-700">
                 <div className="flex items-center space-x-4 mb-6">
                    <div className="p-3 bg-blue-600/20 rounded-full">
@@ -189,7 +188,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Info Panel */}
               <div className="bg-slate-800 p-8 rounded-xl border border-slate-700 text-center">
                 <Bot className="w-16 h-16 text-slate-600 mx-auto mb-4" />
                 <h2 className="text-xl font-bold text-white mb-2">Environment Configuration</h2>
@@ -202,8 +200,8 @@ export default function App() {
                     <code className="text-green-400 break-all">process.env.TELEGRAM_BOT_TOKEN</code>
                   </div>
                   <div className="bg-slate-900 p-4 rounded-lg border border-slate-700">
-                    <span className="text-xs text-slate-500 uppercase tracking-wider block mb-1">Gemini API Key</span>
-                    <code className="text-blue-400 break-all">process.env.API_KEY</code>
+                    <span className="text-xs text-slate-500 uppercase tracking-wider block mb-1">Groq API Key</span>
+                    <code className="text-blue-400 break-all">process.env.GROQ_API_KEY</code>
                   </div>
                   <div className="bg-slate-900 p-4 rounded-lg border border-slate-700">
                     <span className="text-xs text-slate-500 uppercase tracking-wider block mb-1">Owner ID</span>

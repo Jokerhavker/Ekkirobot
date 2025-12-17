@@ -135,7 +135,7 @@ export default function App() {
 
         <div className="max-w-7xl mx-auto">
           {activeTab === 'dashboard' && <Dashboard ownerId={ownerId} />}
-          {activeTab === 'chat' && <ChatDemo />}
+          {activeTab === 'chat' && <ChatDemo ownerId={ownerId} />}
           {activeTab === 'broadcast' && <BroadcastPanel ownerId={ownerId} />}
           {activeTab === 'users' && <UserManager ownerId={ownerId} />}
           {activeTab === 'settings' && (

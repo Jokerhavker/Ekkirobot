@@ -3,7 +3,11 @@ import { Send, Bot, User as UserIcon, Loader2, RefreshCw } from 'lucide-react';
 import { chatWithEkki } from '../services/geminiService';
 import { Message } from '../types';
 
-export const ChatDemo: React.FC = () => {
+interface ChatDemoProps {
+  ownerId: string;
+}
+
+export const ChatDemo: React.FC<ChatDemoProps> = ({ ownerId }) => {
   const [messages, setMessages] = useState<Message[]>([
     {
       id: '1',
@@ -46,7 +50,8 @@ export const ChatDemo: React.FC = () => {
         parts: [{ text: m.text }]
       }));
 
-      const responseText = await chatWithEkki(userMsg.text, history);
+      // Pass ownerId to the service
+      const responseText = await chatWithEkki(userMsg.text, history, ownerId);
 
       const botMsg: Message = {
         id: (Date.now() + 1).toString(),

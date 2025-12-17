@@ -9,7 +9,7 @@ import { GoogleGenAI } from "@google/genai";
 import { MongoClient } from "mongodb";
 
 // --- Configuration ---
-const MAX_EXECUTION_TIME = 9000; // 9 seconds (Vercel free tier limit is usually 10s)
+const MAX_EXECUTION_TIME = 9000; // 9 seconds
 
 // --- MongoDB Configuration ---
 const uri = process.env.MONGODB_URI || "";
@@ -41,11 +41,7 @@ export default async function handler(req: any, res: any) {
   try {
     const update = req.body;
     
-    // Log minimal info for debugging
-    // console.log("Update ID:", update.update_id); 
-
     if (update.message) {
-      // Execute logic but ensure we return 200 OK to Telegram quickly 
       // Note: In Vercel, we must await the work before returning or the function freezes.
       await handleMessage(update.message, token);
     } 
@@ -79,13 +75,10 @@ async function handleMessage(message: any, token: string) {
   const isCommand = text.startsWith('/');
 
   // OPTIMIZATION: Only connect to DB if we really need to (Command, Mention, Private)
-  // We skip logging every single group message to save time.
   const shouldLog = shouldReply || isCommand || !isGroup;
 
   // 1. Send Typing Indicator immediately if we plan to reply
   if (shouldReply && !isCommand) {
-     // Don't await this, just fire it. 
-     // *Actually in Vercel we should await it to ensure it goes out, but we can do it parallel*
      sendChatAction(chatId, 'typing', token).catch(e => console.error("Typing action failed", e));
   }
 
@@ -172,7 +165,7 @@ async function handleMessage(message: any, token: string) {
     }
   })());
 
-  // Execute everything and handle blocked user error
+  // Execute everything
   try {
     await Promise.all(tasks);
   } catch (e: any) {
@@ -189,7 +182,8 @@ async function handleMessage(message: any, token: string) {
 async function handleAIResponse(chatId: number, text: string, userName: string, token: string) {
   const apiKey = process.env.API_KEY;
   if (!apiKey) {
-    await sendMessage(chatId, "⚠️ Config Error: No API Key", token);
+    // This message helps user know they need to check Vercel Env Vars and redeploy
+    await sendMessage(chatId, "⚠️ Config Error: `API_KEY` is missing in Vercel. Please add it and Redeploy.", token);
     return;
   }
 
@@ -208,7 +202,7 @@ async function handleAIResponse(chatId: number, text: string, userName: string, 
     );
 
     const apiCall = ai.models.generateContent({
-        model: 'gemini-2.5-flash', // Fast model
+        model: 'gemini-2.5-flash', 
         contents: [{ role: 'user', parts: [{ text }] }],
         config: { systemInstruction: systemPrompt }
     });
@@ -220,13 +214,12 @@ async function handleAIResponse(chatId: number, text: string, userName: string, 
     if (reply) {
       await sendMessage(chatId, reply, token);
       
-      // Log bot reply asynchronously (fire and forget-ish, but await for Vercel)
+      // Log bot reply asynchronously
       logBotReply(chatId, reply).catch(console.error);
     }
   } catch (error: any) {
     console.error('AI Error:', error);
     if (error.message === "AI_TIMEOUT") {
-        // Fallback message if AI is too slow
         await sendMessage(chatId, "Sochne mein time lag raha hai... (Thinking took too long!) 😅", token);
     } else {
         await sendMessage(chatId, "Kuch gadbad ho gayi... (Something went wrong)", token);
@@ -239,16 +232,13 @@ async function handleModeration(chatId: number, message: any, action: string, to
     if (!targetId) return;
 
     try {
-        let endpoint = 'banChatMember'; // for kick/ban
+        let endpoint = 'banChatMember'; 
         let body: any = { chat_id: chatId, user_id: targetId };
         
         if (action === 'mute') {
             endpoint = 'restrictChatMember';
             body.permissions = { can_send_messages: false };
-        } else if (action === 'kick') {
-            // Kick = unban immediately
-            // We just ban then unban usually, or just banChatMember (which kicks)
-        }
+        } 
 
         const res = await fetch(`https://api.telegram.org/bot${token}/${endpoint}`, {
             method: 'POST',

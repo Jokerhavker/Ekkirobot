@@ -40,16 +40,18 @@ export default function App() {
       });
       
       const data = await res.json();
-      if (data.ok) {
+      
+      if (res.ok && (data.ok || data.result)) {
         setWebhookStatus('success');
         setWebhookMsg('Webhook successfully connected!');
       } else {
         setWebhookStatus('error');
-        setWebhookMsg(data.description || 'Failed to set webhook');
+        // Prefer specific error from backend, then Telegram description, then generic
+        setWebhookMsg(data.error || data.description || 'Failed to set webhook');
       }
     } catch (e) {
       setWebhookStatus('error');
-      setWebhookMsg('Network error connecting to backend');
+      setWebhookMsg('Network error or invalid response from backend');
     }
   };
 

@@ -33,18 +33,21 @@ export default async function handler(request: Request) {
   const envOwnerId = process.env.OWNER_ID;
   
   if (!adminKey || adminKey !== envOwnerId) {
-    return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers });
+    return new Response(JSON.stringify({ error: 'Unauthorized: Invalid Owner ID' }), { status: 401, headers });
   }
 
   try {
     const { action, payload } = await request.json();
-    const dbClient = await connectToDatabase();
-    const db = dbClient.db('ekki_bot_db');
-
     let result;
+
+    // We only connect to DB inside the cases that need it. 
+    // This allows 'set_webhook' to work even if DB is not configured.
 
     switch (action) {
       case 'stats': {
+        const dbClient = await connectToDatabase();
+        const db = dbClient.db('ekki_bot_db');
+        
         const totalUsers = await db.collection('users').countDocuments();
         const activeGroups = await db.collection('groups').countDocuments({ isBlocked: { $ne: true } });
         const blockedUsers = await db.collection('users').countDocuments({ isBlocked: true });
@@ -54,6 +57,9 @@ export default async function handler(request: Request) {
       }
 
       case 'get_users': {
+        const dbClient = await connectToDatabase();
+        const db = dbClient.db('ekki_bot_db');
+
         const users = await db.collection('users')
           .find({})
           .sort({ lastSeen: -1 })
@@ -70,6 +76,9 @@ export default async function handler(request: Request) {
       }
 
       case 'toggle_block': {
+        const dbClient = await connectToDatabase();
+        const db = dbClient.db('ekki_bot_db');
+
         const { userId, status } = payload;
         const isBlocked = status === 'blocked';
         await db.collection('users').updateOne(
@@ -81,6 +90,9 @@ export default async function handler(request: Request) {
       }
 
       case 'broadcast': {
+        const dbClient = await connectToDatabase();
+        const db = dbClient.db('ekki_bot_db');
+
         const { message, target } = payload;
         const token = process.env.TELEGRAM_BOT_TOKEN;
         
@@ -117,9 +129,14 @@ export default async function handler(request: Request) {
       }
 
       case 'set_webhook': {
+        // No DB connection required here
         const { domain } = payload;
         const token = process.env.TELEGRAM_BOT_TOKEN;
         
+        if (!token) {
+           throw new Error("TELEGRAM_BOT_TOKEN is not set in environment variables");
+        }
+
         // Remove trailing slash if present
         const cleanDomain = domain.replace(/\/$/, "");
         const webhookUrl = `${cleanDomain}/api/telegram-webhook`;
@@ -139,8 +156,9 @@ export default async function handler(request: Request) {
 
     return new Response(JSON.stringify(result), { status: 200, headers });
 
-  } catch (error) {
+  } catch (error: any) {
     console.error("Admin API Error", error);
-    return new Response(JSON.stringify({ error: 'Internal Server Error' }), { status: 500, headers });
+    // Return the actual error message to the frontend for better debugging
+    return new Response(JSON.stringify({ error: error.message || 'Internal Server Error' }), { status: 500, headers });
   }
 }

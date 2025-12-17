@@ -209,20 +209,47 @@ async function handleAIResponse(chatId: number, text: string, userName: string, 
 
     // Race against timeout
     const response: any = await Promise.race([apiCall, timeoutPromise]);
-    const reply = response.text;
+    
+    // Explicitly check for Safety Block or other Finish Reasons
+    const candidate = response.candidates?.[0];
+    if (candidate?.finishReason === 'SAFETY' || candidate?.finishReason === 'RECITATION' || candidate?.finishReason === 'OTHER') {
+       await sendMessage(chatId, "Sorry, I can't talk about that. Let's keep it clean! 😇", token);
+       return;
+    }
+
+    // Safely access text. .text getter can be undefined but doesn't throw usually.
+    // However, if response structure is malformed, it might.
+    let reply = "";
+    try {
+        if (response.text) {
+             reply = response.text;
+        }
+    } catch(err) {
+        console.error("Text extraction failed:", err);
+    }
 
     if (reply) {
       await sendMessage(chatId, reply, token);
-      
-      // Log bot reply asynchronously
       logBotReply(chatId, reply).catch(console.error);
+    } else {
+      // Fallback if no text but not caught as safety
+      await sendMessage(chatId, "I didn't get that. Could you say it differently?", token);
     }
+
   } catch (error: any) {
     console.error('AI Error:', error);
     if (error.message === "AI_TIMEOUT") {
         await sendMessage(chatId, "Sochne mein time lag raha hai... (Thinking took too long!) 😅", token);
     } else {
-        await sendMessage(chatId, "Kuch gadbad ho gayi... (Something went wrong)", token);
+        // Detailed error for debugging
+        const msg = error.message || 'Unknown';
+        if (msg.includes('429')) {
+             await sendMessage(chatId, "Too many messages! Let me breathe. 🥵 (Rate Limit)", token);
+        } else if (msg.includes('500')) {
+             await sendMessage(chatId, "My brain is having a hiccup. Try again later. 😵", token);
+        } else {
+             await sendMessage(chatId, `Kuch gadbad ho gayi... (Error: ${msg})`, token);
+        }
     }
   }
 }

@@ -8,15 +8,15 @@
 import { GoogleGenAI } from "@google/genai";
 import { MongoClient } from "mongodb";
 
+// --- Configuration ---
+const MAX_EXECUTION_TIME = 9000; // 9 seconds (Vercel free tier limit is usually 10s)
+
 // --- MongoDB Configuration ---
 const uri = process.env.MONGODB_URI || "";
 let client: MongoClient | null = null;
 
 async function connectToDatabase() {
-  if (!uri) {
-    console.warn("MONGODB_URI is not defined. Database features will be disabled.");
-    return null;
-  }
+  if (!uri) return null; // Fail silently if no URI
   if (client) return client;
   try {
     client = new MongoClient(uri);
@@ -30,6 +30,7 @@ async function connectToDatabase() {
 
 // --- Main Handler ---
 export default async function handler(req: any, res: any) {
+  // Fast fail for non-POST
   if (req.method !== 'POST') {
     return res.status(405).send('Method not allowed');
   }
@@ -38,23 +39,22 @@ export default async function handler(req: any, res: any) {
   if (!token) return res.status(500).send('Bot Token Missing');
 
   try {
-    // In Vercel Node runtime, req.body is already parsed if valid JSON
-    const update = req.body; 
-    console.log("Received Update:", JSON.stringify(update, null, 2));
+    const update = req.body;
     
-    // Check if it's a message
+    // Log minimal info for debugging
+    // console.log("Update ID:", update.update_id); 
+
     if (update.message) {
+      // Execute logic but ensure we return 200 OK to Telegram quickly 
+      // Note: In Vercel, we must await the work before returning or the function freezes.
       await handleMessage(update.message, token);
     } 
-    // Handle Callback Queries (if any in future)
-    else if (update.callback_query) {
-      // Future implementation
-    }
 
     return res.status(200).send('OK');
   } catch (e) {
     console.error("Webhook Error:", e);
-    return res.status(500).send('Error');
+    // Always return 200 to prevent Telegram from retrying endlessly
+    return res.status(200).send('Error');
   }
 }
 
@@ -65,195 +65,248 @@ async function handleMessage(message: any, token: string) {
   const user = message.from;
   const isGroup = message.chat.type === 'group' || message.chat.type === 'supergroup';
   const ownerId = Number(process.env.OWNER_ID) || 0;
-
-  // 1. Database Operations (Store Everything)
-  try {
-    const dbClient = await connectToDatabase();
-    const db = dbClient?.db('ekki_bot_db');
-    
-    if (db) {
-      // Upsert User
-      await db.collection('users').updateOne(
-        { telegramId: user.id },
-        { 
-          $set: { 
-            username: user.username, 
-            firstName: user.first_name, 
-            lastSeen: new Date() 
-          },
-          $setOnInsert: { isBlocked: false, role: 'user', joinedAt: new Date() }
-        },
-        { upsert: true }
-      );
-
-      // Upsert Group (if applicable)
-      if (isGroup) {
-        await db.collection('groups').updateOne(
-          { groupId: chatId },
-          { 
-            $set: { title: message.chat.title, lastActive: new Date() },
-            $setOnInsert: { isBlocked: false, joinedAt: new Date() }
-          },
-          { upsert: true }
-        );
-      }
-
-      // Check Blacklist
-      const userDoc = await db.collection('users').findOne({ telegramId: user.id });
-      if (userDoc?.isBlocked) return; // Ignore blocked users
-
-      if (isGroup) {
-        const groupDoc = await db.collection('groups').findOne({ groupId: chatId });
-        if (groupDoc?.isBlocked) return; // Ignore blocked groups
-      }
-
-      // Log User Message
-      await db.collection('logs').insertOne({
-        chatId,
-        userId: user.id,
-        text,
-        role: 'user',
-        timestamp: new Date()
-      });
-    }
-  } catch (dbError) {
-    console.error("Database Error (Non-fatal):", dbError);
-  }
-
-  // 2. Admin & Moderation Logic (Kick/Ban/Mute)
-  const lowerText = text.toLowerCase();
-  const modCommand = lowerText.match(/\b(kick|ban|mute)\b/);
   
-  if (modCommand && (message.reply_to_message || message.entities)) {
-    const isAdmin = await checkIsAdmin(chatId, user.id, token, ownerId);
-    
-    if (isAdmin) {
-      let targetId = message.reply_to_message?.from?.id;
-      let targetName = message.reply_to_message?.from?.first_name || "User";
-
-      if (targetId) {
-        const action = modCommand[0]; 
-        let success = false;
-        
-        try {
-          if (action === 'kick' || action === 'ban') {
-             await  fetch(`https://api.telegram.org/bot${token}/banChatMember`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ chat_id: chatId, user_id: targetId })
-             });
-             success = true;
-          } else if (action === 'mute') {
-             await  fetch(`https://api.telegram.org/bot${token}/restrictChatMember`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ 
-                  chat_id: chatId, 
-                  user_id: targetId,
-                  permissions: { can_send_messages: false }
-                })
-             });
-             success = true;
-          }
-
-          if (success) {
-            await sendMessage(chatId, `Done! ${action}ed ${targetName} as requested. 😎`, token);
-            return; 
-          }
-        } catch (err) {
-          await sendMessage(chatId, `I tried to ${action} them, but I don't have enough permissions! Make me admin first. 🥺`, token);
-          return;
-        }
-      }
-    }
-  }
-
-  // 3. Bot Commands (/start, /help)
-  if (text.startsWith('/start')) {
-    const intro = `Namaste! 🙏\nI am Ekki, your AI friend and group manager.\n\nI can talk in Hinglish and help manage your group.\nMade with ❤️ by @A1blackhats.`;
-    await sendMessage(chatId, intro, token);
-    return;
-  }
-  
-  if (text.startsWith('/help')) {
-    const help = `**How to use Ekki:**\n\n🗣️ **Chat:** Tag me @ekkirobot or say 'Ekki'/'Akki' to talk.\n🛠️ **Admin:** Admins can reply to a user with "Kick", "Ban", or "Mute" and I will handle it!\n\nI speak Hinglish mostly!`;
-    await sendMessage(chatId, help, token);
-    return;
-  }
-
-  // 4. AI Chat Logic
+  // triggers
+  const botUsername = process.env.BOT_USERNAME || 'ekkirobot';
   const isMentioned = 
-    text.includes(`@${process.env.BOT_USERNAME || 'ekkirobot'}`) || 
-    lowerText.includes('ekki') || 
-    lowerText.includes('eki') || 
-    lowerText.includes('akki') ||
-    (message.reply_to_message && message.reply_to_message.from.username === (process.env.BOT_USERNAME || 'ekkirobot'));
+    text.includes(`@${botUsername}`) || 
+    (message.reply_to_message && message.reply_to_message.from.username === botUsername);
+  
+  // Regex for name triggers (case insensitive)
+  const nameTrigger = /\b(ekki|eki|akki)\b/i.test(text);
 
-  // Only reply in groups if mentioned, always reply in private
-  if (isGroup && !isMentioned) return;
+  const shouldReply = !isGroup || isMentioned || nameTrigger;
+  const isCommand = text.startsWith('/');
 
-  const apiKey = process.env.API_KEY || '';
+  // OPTIMIZATION: Only connect to DB if we really need to (Command, Mention, Private)
+  // We skip logging every single group message to save time.
+  const shouldLog = shouldReply || isCommand || !isGroup;
+
+  // 1. Send Typing Indicator immediately if we plan to reply
+  if (shouldReply && !isCommand) {
+     // Don't await this, just fire it. 
+     // *Actually in Vercel we should await it to ensure it goes out, but we can do it parallel*
+     sendChatAction(chatId, 'typing', token).catch(e => console.error("Typing action failed", e));
+  }
+
+  // 2. Prepare Parallel Tasks
+  const tasks: Promise<any>[] = [];
+
+  // TASK A: Database Logging (Background)
+  if (shouldLog) {
+    tasks.push((async () => {
+      try {
+        const dbClient = await connectToDatabase();
+        if (!dbClient) return;
+        const db = dbClient.db('ekki_bot_db');
+        
+        const timestamp = new Date();
+
+        // Parallel DB writes
+        await Promise.all([
+            // Upsert User
+            db.collection('users').updateOne(
+                { telegramId: user.id },
+                { 
+                    $set: { username: user.username, firstName: user.first_name, lastSeen: timestamp },
+                    $setOnInsert: { isBlocked: false, role: 'user', joinedAt: timestamp }
+                },
+                { upsert: true }
+            ),
+            // Upsert Group
+            isGroup ? db.collection('groups').updateOne(
+                { groupId: chatId },
+                { 
+                    $set: { title: message.chat.title, lastActive: timestamp },
+                    $setOnInsert: { isBlocked: false, joinedAt: timestamp }
+                },
+                { upsert: true }
+            ) : Promise.resolve(),
+            // Log Message
+            db.collection('logs').insertOne({
+                chatId,
+                userId: user.id,
+                text,
+                role: 'user',
+                timestamp
+            })
+        ]);
+        
+        // Check blocklist
+        const userDoc = await db.collection('users').findOne({ telegramId: user.id });
+        if (userDoc?.isBlocked) throw new Error("BLOCKED_USER");
+      } catch (e: any) {
+        if (e.message === "BLOCKED_USER") throw e;
+        console.error("DB Task Error:", e);
+      }
+    })());
+  }
+
+  // TASK B: Core Logic (Admin or AI)
+  tasks.push((async () => {
+    // Admin / Mod Commands
+    const lowerText = text.toLowerCase();
+    const modMatch = lowerText.match(/\b(kick|ban|mute)\b/);
+    
+    if (modMatch && (message.reply_to_message || message.entities)) {
+       const isAdmin = await checkIsAdmin(chatId, user.id, token, ownerId);
+       if (isAdmin) {
+         await handleModeration(chatId, message, modMatch[0], token);
+         return; // Don't do AI if it was a command
+       }
+    }
+
+    if (text.startsWith('/start')) {
+        await sendMessage(chatId, `Namaste! 🙏\nI am Ekki. Tag me to talk!`, token);
+        return;
+    }
+    
+    if (text.startsWith('/help')) {
+        await sendMessage(chatId, `**Help:**\n• Chat: @${botUsername} [msg]\n• Admin: Reply with Kick/Ban/Mute`, token);
+        return;
+    }
+
+    // AI Response
+    if (shouldReply) {
+       await handleAIResponse(chatId, text, user.first_name, token);
+    }
+  })());
+
+  // Execute everything and handle blocked user error
+  try {
+    await Promise.all(tasks);
+  } catch (e: any) {
+    if (e.message === "BLOCKED_USER") {
+      console.log(`Blocked user ${user.id} attempted to interact.`);
+    } else {
+      console.error("Handler execution error:", e);
+    }
+  }
+}
+
+// --- Sub-Handlers ---
+
+async function handleAIResponse(chatId: number, text: string, userName: string, token: string) {
+  const apiKey = process.env.API_KEY;
   if (!apiKey) {
-    console.error("API_KEY is missing");
-    await sendMessage(chatId, "My AI brain is missing an API Key! Please tell my owner.", token);
+    await sendMessage(chatId, "⚠️ Config Error: No API Key", token);
     return;
   }
 
-  const ai = new GoogleGenAI({ apiKey });
-
   try {
-    const systemPrompt = `You are Ekki (username @ekkirobot), a polite and friendly girl AI. 
-    - You were made by @A1blackhats.
-    - Speak mainly in Hinglish (Hindi + English).
-    - Be polite, bubbly, and helpful.
-    - User name is ${user.first_name}.
-    - Keep replies concise for Telegram.
+    const ai = new GoogleGenAI({ apiKey });
+    const systemPrompt = `You are Ekki (@ekkirobot), a friendly Indian AI girl.
+    - User: ${userName}
+    - Style: Hinglish (Hindi+English mix), casual, bubbly, using emojis.
+    - Length: Keep it short (1-2 sentences) for chat.
+    - Context: You are in a Telegram chat.
     `;
-    
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: [{ role: 'user', parts: [{ text }] }],
-      config: {
-        systemInstruction: systemPrompt
-      }
+
+    // Create a timeout promise
+    const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error("AI_TIMEOUT")), MAX_EXECUTION_TIME - 2000)
+    );
+
+    const apiCall = ai.models.generateContent({
+        model: 'gemini-2.5-flash', // Fast model
+        contents: [{ role: 'user', parts: [{ text }] }],
+        config: { systemInstruction: systemPrompt }
     });
 
-    const reply = response.text; 
-    
-    // Log AI Response to DB
-    const dbClient = await connectToDatabase();
-    const db = dbClient?.db('ekki_bot_db');
-    if (db) {
-       await db.collection('logs').insertOne({
-        chatId,
-        userId: 0, 
-        text: reply || 'Error in response',
-        role: 'model',
-        timestamp: new Date()
-      });
-    }
+    // Race against timeout
+    const response: any = await Promise.race([apiCall, timeoutPromise]);
+    const reply = response.text;
 
     if (reply) {
       await sendMessage(chatId, reply, token);
+      
+      // Log bot reply asynchronously (fire and forget-ish, but await for Vercel)
+      logBotReply(chatId, reply).catch(console.error);
     }
-  } catch (error) {
-    console.error('Gemini Error', error);
+  } catch (error: any) {
+    console.error('AI Error:', error);
+    if (error.message === "AI_TIMEOUT") {
+        // Fallback message if AI is too slow
+        await sendMessage(chatId, "Sochne mein time lag raha hai... (Thinking took too long!) 😅", token);
+    } else {
+        await sendMessage(chatId, "Kuch gadbad ho gayi... (Something went wrong)", token);
+    }
   }
+}
+
+async function handleModeration(chatId: number, message: any, action: string, token: string) {
+    const targetId = message.reply_to_message?.from?.id;
+    if (!targetId) return;
+
+    try {
+        let endpoint = 'banChatMember'; // for kick/ban
+        let body: any = { chat_id: chatId, user_id: targetId };
+        
+        if (action === 'mute') {
+            endpoint = 'restrictChatMember';
+            body.permissions = { can_send_messages: false };
+        } else if (action === 'kick') {
+            // Kick = unban immediately
+            // We just ban then unban usually, or just banChatMember (which kicks)
+        }
+
+        const res = await fetch(`https://api.telegram.org/bot${token}/${endpoint}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        
+        if (res.ok) {
+            await sendMessage(chatId, `Done! ${action}ed user.`, token);
+        } else {
+            throw new Error("Telegram API Failed");
+        }
+    } catch (e) {
+        await sendMessage(chatId, `Failed to ${action}. Give me Admin permissions!`, token);
+    }
 }
 
 // --- Helpers ---
 
 async function sendMessage(chatId: number | string, text: string, token: string) {
-  await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'Markdown' })
-  });
+  try {
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'Markdown' })
+    });
+  } catch (e) {
+    console.error("SendMessage Error", e);
+  }
+}
+
+async function sendChatAction(chatId: number | string, action: string, token: string) {
+    try {
+        await fetch(`https://api.telegram.org/bot${token}/sendChatAction`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: chatId, action })
+        });
+    } catch (e) {
+        console.error("ChatAction Error", e);
+    }
+}
+
+async function logBotReply(chatId: number, text: string) {
+    const client = await connectToDatabase();
+    if (client) {
+        await client.db('ekki_bot_db').collection('logs').insertOne({
+            chatId,
+            userId: 0,
+            text,
+            role: 'model',
+            timestamp: new Date()
+        });
+    }
 }
 
 async function checkIsAdmin(chatId: number | string, userId: number, token: string, ownerId: number): Promise<boolean> {
-  if (userId === ownerId) return true; // Bot Owner is always admin
-
+  if (userId === ownerId) return true; 
   try {
     const res = await fetch(`https://api.telegram.org/bot${token}/getChatMember?chat_id=${chatId}&user_id=${userId}`);
     const data = await res.json();

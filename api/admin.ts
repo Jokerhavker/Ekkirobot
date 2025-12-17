@@ -12,36 +12,36 @@ async function connectToDatabase() {
   return client;
 }
 
-export default async function handler(request: Request) {
+export default async function handler(req: any, res: any) {
   // CORS Headers for client-side access
-  const headers = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, x-admin-key',
-  };
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-admin-key');
 
-  if (request.method === 'OPTIONS') {
-    return new Response(null, { status: 204, headers });
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
   }
 
-  if (request.method !== 'POST') {
-    return new Response('Method not allowed', { status: 405, headers });
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
   }
 
   // Authentication
-  const adminKey = request.headers.get('x-admin-key');
+  // In Node.js runtime, headers is a plain object. Keys are lowercased.
+  const adminKey = req.headers['x-admin-key'];
   const envOwnerId = process.env.OWNER_ID;
   
-  if (!adminKey || adminKey !== envOwnerId) {
-    return new Response(JSON.stringify({ error: 'Unauthorized: Invalid Owner ID' }), { status: 401, headers });
+  // Handle case where header might be an array
+  const providedKey = Array.isArray(adminKey) ? adminKey[0] : adminKey;
+
+  if (!providedKey || providedKey !== envOwnerId) {
+    return res.status(401).json({ error: 'Unauthorized: Invalid Owner ID' });
   }
 
   try {
-    const { action, payload } = await request.json();
+    // Vercel parses JSON body automatically for Node functions
+    const { action, payload } = req.body;
     let result;
-
-    // We only connect to DB inside the cases that need it. 
-    // This allows 'set_webhook' to work even if DB is not configured.
 
     switch (action) {
       case 'stats': {
@@ -129,7 +129,6 @@ export default async function handler(request: Request) {
       }
 
       case 'set_webhook': {
-        // No DB connection required here
         const { domain } = payload;
         const token = process.env.TELEGRAM_BOT_TOKEN;
         
@@ -137,7 +136,6 @@ export default async function handler(request: Request) {
            throw new Error("TELEGRAM_BOT_TOKEN is not set in environment variables");
         }
 
-        // Remove trailing slash if present
         const cleanDomain = domain.replace(/\/$/, "");
         const webhookUrl = `${cleanDomain}/api/telegram-webhook`;
         
@@ -151,14 +149,13 @@ export default async function handler(request: Request) {
       }
 
       default:
-        return new Response('Invalid Action', { status: 400, headers });
+        return res.status(400).json({ error: 'Invalid Action' });
     }
 
-    return new Response(JSON.stringify(result), { status: 200, headers });
+    return res.status(200).json(result);
 
   } catch (error: any) {
     console.error("Admin API Error", error);
-    // Return the actual error message to the frontend for better debugging
-    return new Response(JSON.stringify({ error: error.message || 'Internal Server Error' }), { status: 500, headers });
+    return res.status(500).json({ error: error.message || 'Internal Server Error' });
   }
 }

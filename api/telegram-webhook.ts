@@ -29,17 +29,18 @@ async function connectToDatabase() {
 }
 
 // --- Main Handler ---
-export default async function handler(request: Request) {
-  if (request.method !== 'POST') {
-    return new Response('Method not allowed', { status: 405 });
+export default async function handler(req: any, res: any) {
+  if (req.method !== 'POST') {
+    return res.status(405).send('Method not allowed');
   }
 
   const token = process.env.TELEGRAM_BOT_TOKEN;
-  if (!token) return new Response('Bot Token Missing', { status: 500 });
+  if (!token) return res.status(500).send('Bot Token Missing');
 
   try {
-    const update = await request.json();
-    console.log("Received Update:", JSON.stringify(update, null, 2)); // Debug logging
+    // In Vercel Node runtime, req.body is already parsed if valid JSON
+    const update = req.body; 
+    console.log("Received Update:", JSON.stringify(update, null, 2));
     
     // Check if it's a message
     if (update.message) {
@@ -50,10 +51,10 @@ export default async function handler(request: Request) {
       // Future implementation
     }
 
-    return new Response('OK', { status: 200 });
+    return res.status(200).send('OK');
   } catch (e) {
     console.error("Webhook Error:", e);
-    return new Response('Error', { status: 500 });
+    return res.status(500).send('Error');
   }
 }
 
@@ -120,22 +121,18 @@ async function handleMessage(message: any, token: string) {
   }
 
   // 2. Admin & Moderation Logic (Kick/Ban/Mute)
-  // Check if message mentions kick/ban/mute and has a target
   const lowerText = text.toLowerCase();
   const modCommand = lowerText.match(/\b(kick|ban|mute)\b/);
   
   if (modCommand && (message.reply_to_message || message.entities)) {
-    // Check if sender is Admin or Owner
     const isAdmin = await checkIsAdmin(chatId, user.id, token, ownerId);
     
     if (isAdmin) {
       let targetId = message.reply_to_message?.from?.id;
       let targetName = message.reply_to_message?.from?.first_name || "User";
 
-      // If not a reply, check for mention entities (basic implementation)
-      
       if (targetId) {
-        const action = modCommand[0]; // kick, ban, or mute
+        const action = modCommand[0]; 
         let success = false;
         
         try {
@@ -147,7 +144,6 @@ async function handleMessage(message: any, token: string) {
              });
              success = true;
           } else if (action === 'mute') {
-             // Mute permissions (restrict)
              await  fetch(`https://api.telegram.org/bot${token}/restrictChatMember`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -162,7 +158,7 @@ async function handleMessage(message: any, token: string) {
 
           if (success) {
             await sendMessage(chatId, `Done! ${action}ed ${targetName} as requested. 😎`, token);
-            return; // Stop processing, command done
+            return; 
           }
         } catch (err) {
           await sendMessage(chatId, `I tried to ${action} them, but I don't have enough permissions! Make me admin first. 🥺`, token);
@@ -186,7 +182,6 @@ async function handleMessage(message: any, token: string) {
   }
 
   // 4. AI Chat Logic
-  // Triggers: Mentioned, Replied to Bot, or Keyword 'ekki'/'eki'/'akki'
   const isMentioned = 
     text.includes(`@${process.env.BOT_USERNAME || 'ekkirobot'}`) || 
     lowerText.includes('ekki') || 
@@ -215,7 +210,6 @@ async function handleMessage(message: any, token: string) {
     - Keep replies concise for Telegram.
     `;
     
-    // Updated to use ai.models.generateContent properly
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
       contents: [{ role: 'user', parts: [{ text }] }],
@@ -224,7 +218,7 @@ async function handleMessage(message: any, token: string) {
       }
     });
 
-    const reply = response.text; // Access text property directly
+    const reply = response.text; 
     
     // Log AI Response to DB
     const dbClient = await connectToDatabase();
@@ -232,7 +226,7 @@ async function handleMessage(message: any, token: string) {
     if (db) {
        await db.collection('logs').insertOne({
         chatId,
-        userId: 0, // 0 for Bot
+        userId: 0, 
         text: reply || 'Error in response',
         role: 'model',
         timestamp: new Date()

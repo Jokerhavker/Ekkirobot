@@ -4,7 +4,7 @@ import { Dashboard } from './components/Dashboard';
 import { ChatDemo } from './components/ChatDemo';
 import { BroadcastPanel } from './components/BroadcastPanel';
 import { UserManager } from './components/UserManager';
-import { Bot, Key, Menu, X } from 'lucide-react';
+import { Bot, Key, Menu, X, Globe, Check, AlertCircle } from 'lucide-react';
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -12,10 +12,44 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
+  // Settings State
+  const [domainUrl, setDomainUrl] = useState('');
+  const [webhookStatus, setWebhookStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [webhookMsg, setWebhookMsg] = useState('');
+
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     if (ownerId.trim().length > 0) {
       setIsAuthenticated(true);
+    }
+  };
+
+  const handleSetWebhook = async () => {
+    if (!domainUrl.trim()) return;
+    setWebhookStatus('loading');
+    setWebhookMsg('');
+    
+    try {
+      const res = await fetch('/api/admin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-key': ownerId },
+        body: JSON.stringify({ 
+          action: 'set_webhook', 
+          payload: { domain: domainUrl } 
+        })
+      });
+      
+      const data = await res.json();
+      if (data.ok) {
+        setWebhookStatus('success');
+        setWebhookMsg('Webhook successfully connected!');
+      } else {
+        setWebhookStatus('error');
+        setWebhookMsg(data.description || 'Failed to set webhook');
+      }
+    } catch (e) {
+      setWebhookStatus('error');
+      setWebhookMsg('Network error connecting to backend');
     }
   };
 
@@ -103,30 +137,80 @@ export default function App() {
           {activeTab === 'broadcast' && <BroadcastPanel ownerId={ownerId} />}
           {activeTab === 'users' && <UserManager ownerId={ownerId} />}
           {activeTab === 'settings' && (
-            <div className="bg-slate-800 p-8 rounded-xl border border-slate-700 text-center">
-              <Bot className="w-16 h-16 text-slate-600 mx-auto mb-4" />
-              <h2 className="text-xl font-bold text-white mb-2">Bot Configuration</h2>
-              <p className="text-slate-400 mb-6">
-                To deploy the backend logic to Vercel, copy the code from 
-                <code className="bg-slate-900 px-2 py-1 rounded text-pink-400 mx-1">api/telegram-webhook.ts</code>
-                and set your environment variables in Vercel.
-              </p>
-              <div className="grid gap-4 max-w-lg mx-auto text-left">
-                <div className="bg-slate-900 p-4 rounded-lg border border-slate-700">
-                  <span className="text-xs text-slate-500 uppercase tracking-wider block mb-1">Telegram Token</span>
-                  <code className="text-green-400 break-all">process.env.TELEGRAM_BOT_TOKEN</code>
+            <div className="space-y-6">
+              {/* Connection Panel */}
+              <div className="bg-slate-800 p-8 rounded-xl border border-slate-700">
+                <div className="flex items-center space-x-4 mb-6">
+                   <div className="p-3 bg-blue-600/20 rounded-full">
+                     <Globe className="w-8 h-8 text-blue-500" />
+                   </div>
+                   <div>
+                     <h2 className="text-xl font-bold text-white">Connect to Telegram</h2>
+                     <p className="text-slate-400">Set the webhook so Telegram knows where to send messages.</p>
+                   </div>
                 </div>
-                <div className="bg-slate-900 p-4 rounded-lg border border-slate-700">
-                  <span className="text-xs text-slate-500 uppercase tracking-wider block mb-1">Gemini API Key</span>
-                  <code className="text-blue-400 break-all">process.env.API_KEY</code>
+
+                <div className="space-y-4 max-w-xl">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-300 mb-2">Vercel App URL</label>
+                    <div className="flex space-x-2">
+                      <input 
+                        type="text" 
+                        value={domainUrl}
+                        onChange={(e) => setDomainUrl(e.target.value)}
+                        placeholder="https://your-project.vercel.app"
+                        className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                      />
+                      <button 
+                        onClick={handleSetWebhook}
+                        disabled={webhookStatus === 'loading'}
+                        className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium transition-colors disabled:opacity-50"
+                      >
+                        {webhookStatus === 'loading' ? 'Setting...' : 'Set Webhook'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {webhookStatus === 'success' && (
+                    <div className="p-4 bg-green-900/20 border border-green-700/50 rounded-lg flex items-center space-x-2 text-green-400">
+                      <Check className="w-5 h-5" />
+                      <span>{webhookMsg}</span>
+                    </div>
+                  )}
+
+                  {webhookStatus === 'error' && (
+                    <div className="p-4 bg-red-900/20 border border-red-700/50 rounded-lg flex items-center space-x-2 text-red-400">
+                      <AlertCircle className="w-5 h-5" />
+                      <span>{webhookMsg}</span>
+                    </div>
+                  )}
                 </div>
-                <div className="bg-slate-900 p-4 rounded-lg border border-slate-700">
-                  <span className="text-xs text-slate-500 uppercase tracking-wider block mb-1">Owner ID</span>
-                  <code className="text-purple-400 break-all">process.env.OWNER_ID</code>
-                </div>
-                <div className="bg-slate-900 p-4 rounded-lg border border-slate-700">
-                  <span className="text-xs text-slate-500 uppercase tracking-wider block mb-1">MongoDB URI</span>
-                  <code className="text-orange-400 break-all">process.env.MONGODB_URI</code>
+              </div>
+
+              {/* Info Panel */}
+              <div className="bg-slate-800 p-8 rounded-xl border border-slate-700 text-center">
+                <Bot className="w-16 h-16 text-slate-600 mx-auto mb-4" />
+                <h2 className="text-xl font-bold text-white mb-2">Environment Configuration</h2>
+                <p className="text-slate-400 mb-6">
+                  Ensure these variables are set in your Vercel Project Settings.
+                </p>
+                <div className="grid gap-4 max-w-lg mx-auto text-left">
+                  <div className="bg-slate-900 p-4 rounded-lg border border-slate-700">
+                    <span className="text-xs text-slate-500 uppercase tracking-wider block mb-1">Telegram Token</span>
+                    <code className="text-green-400 break-all">process.env.TELEGRAM_BOT_TOKEN</code>
+                  </div>
+                  <div className="bg-slate-900 p-4 rounded-lg border border-slate-700">
+                    <span className="text-xs text-slate-500 uppercase tracking-wider block mb-1">Gemini API Key</span>
+                    <code className="text-blue-400 break-all">process.env.API_KEY</code>
+                  </div>
+                  <div className="bg-slate-900 p-4 rounded-lg border border-slate-700">
+                    <span className="text-xs text-slate-500 uppercase tracking-wider block mb-1">Owner ID</span>
+                    <code className="text-purple-400 break-all">process.env.OWNER_ID</code>
+                  </div>
+                  <div className="bg-slate-900 p-4 rounded-lg border border-slate-700">
+                    <span className="text-xs text-slate-500 uppercase tracking-wider block mb-1">MongoDB URI</span>
+                    <code className="text-orange-400 break-all">process.env.MONGODB_URI</code>
+                  </div>
                 </div>
               </div>
             </div>

@@ -13,7 +13,10 @@ const uri = process.env.MONGODB_URI || "";
 let client: MongoClient | null = null;
 
 async function connectToDatabase() {
-  if (!uri) return null;
+  if (!uri) {
+    console.warn("MONGODB_URI is not defined. Database features will be disabled.");
+    return null;
+  }
   if (client) return client;
   try {
     client = new MongoClient(uri);
@@ -36,6 +39,7 @@ export default async function handler(request: Request) {
 
   try {
     const update = await request.json();
+    console.log("Received Update:", JSON.stringify(update, null, 2)); // Debug logging
     
     // Check if it's a message
     if (update.message) {
@@ -62,53 +66,57 @@ async function handleMessage(message: any, token: string) {
   const ownerId = Number(process.env.OWNER_ID) || 0;
 
   // 1. Database Operations (Store Everything)
-  const dbClient = await connectToDatabase();
-  const db = dbClient?.db('ekki_bot_db');
-  
-  if (db) {
-    // Upsert User
-    await db.collection('users').updateOne(
-      { telegramId: user.id },
-      { 
-        $set: { 
-          username: user.username, 
-          firstName: user.first_name, 
-          lastSeen: new Date() 
-        },
-        $setOnInsert: { isBlocked: false, role: 'user', joinedAt: new Date() }
-      },
-      { upsert: true }
-    );
-
-    // Upsert Group (if applicable)
-    if (isGroup) {
-      await db.collection('groups').updateOne(
-        { groupId: chatId },
+  try {
+    const dbClient = await connectToDatabase();
+    const db = dbClient?.db('ekki_bot_db');
+    
+    if (db) {
+      // Upsert User
+      await db.collection('users').updateOne(
+        { telegramId: user.id },
         { 
-          $set: { title: message.chat.title, lastActive: new Date() },
-          $setOnInsert: { isBlocked: false, joinedAt: new Date() }
+          $set: { 
+            username: user.username, 
+            firstName: user.first_name, 
+            lastSeen: new Date() 
+          },
+          $setOnInsert: { isBlocked: false, role: 'user', joinedAt: new Date() }
         },
         { upsert: true }
       );
+
+      // Upsert Group (if applicable)
+      if (isGroup) {
+        await db.collection('groups').updateOne(
+          { groupId: chatId },
+          { 
+            $set: { title: message.chat.title, lastActive: new Date() },
+            $setOnInsert: { isBlocked: false, joinedAt: new Date() }
+          },
+          { upsert: true }
+        );
+      }
+
+      // Check Blacklist
+      const userDoc = await db.collection('users').findOne({ telegramId: user.id });
+      if (userDoc?.isBlocked) return; // Ignore blocked users
+
+      if (isGroup) {
+        const groupDoc = await db.collection('groups').findOne({ groupId: chatId });
+        if (groupDoc?.isBlocked) return; // Ignore blocked groups
+      }
+
+      // Log User Message
+      await db.collection('logs').insertOne({
+        chatId,
+        userId: user.id,
+        text,
+        role: 'user',
+        timestamp: new Date()
+      });
     }
-
-    // Check Blacklist
-    const userDoc = await db.collection('users').findOne({ telegramId: user.id });
-    if (userDoc?.isBlocked) return; // Ignore blocked users
-
-    if (isGroup) {
-      const groupDoc = await db.collection('groups').findOne({ groupId: chatId });
-      if (groupDoc?.isBlocked) return; // Ignore blocked groups
-    }
-
-    // Log User Message
-    await db.collection('logs').insertOne({
-      chatId,
-      userId: user.id,
-      text,
-      role: 'user',
-      timestamp: new Date()
-    });
+  } catch (dbError) {
+    console.error("Database Error (Non-fatal):", dbError);
   }
 
   // 2. Admin & Moderation Logic (Kick/Ban/Mute)
@@ -191,7 +199,11 @@ async function handleMessage(message: any, token: string) {
   if (isGroup && !isMentioned) return;
 
   const apiKey = process.env.API_KEY || '';
-  if (!apiKey) return;
+  if (!apiKey) {
+    console.error("API_KEY is missing");
+    await sendMessage(chatId, "My AI brain is missing an API Key! Please tell my owner.", token);
+    return;
+  }
 
   const ai = new GoogleGenAI({ apiKey });
 
@@ -204,26 +216,33 @@ async function handleMessage(message: any, token: string) {
     - Keep replies concise for Telegram.
     `;
     
-    const model = ai.models.getGenerativeModel({ 
+    // CORRECT usage of generateContent
+    const response = await ai.models.generateContent({ 
         model: 'gemini-2.5-flash',
-        systemInstruction: systemPrompt
+        contents: [{ role: 'user', parts: [{ text }] }],
+        config: {
+          systemInstruction: systemPrompt
+        }
     });
 
-    const result = await model.generateContent({ contents: [{ role: 'user', parts: [{ text }] }] });
-    const reply = result.response.text();
+    const reply = response.text; // Access text directly property
     
     // Log AI Response to DB
+    const dbClient = await connectToDatabase();
+    const db = dbClient?.db('ekki_bot_db');
     if (db) {
        await db.collection('logs').insertOne({
         chatId,
         userId: 0, // 0 for Bot
-        text: reply,
+        text: reply || 'Error in response',
         role: 'model',
         timestamp: new Date()
       });
     }
 
-    await sendMessage(chatId, reply, token);
+    if (reply) {
+      await sendMessage(chatId, reply, token);
+    }
   } catch (error) {
     console.error('Gemini Error', error);
   }

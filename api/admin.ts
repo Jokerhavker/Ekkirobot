@@ -49,9 +49,6 @@ export default async function handler(request: Request) {
         const activeGroups = await db.collection('groups').countDocuments({ isBlocked: { $ne: true } });
         const blockedUsers = await db.collection('users').countDocuments({ isBlocked: true });
         const totalLogs = await db.collection('logs').countDocuments();
-        
-        // Get generic chart data (last 7 days message counts)
-        // This is a simplified aggregation for demo purposes
         result = { totalUsers, activeGroups, blockedUsers, totalLogs };
         break;
       }
@@ -74,7 +71,7 @@ export default async function handler(request: Request) {
 
       case 'toggle_block': {
         const { userId, status } = payload;
-        const isBlocked = status === 'blocked'; // logic: if we want to set it to blocked
+        const isBlocked = status === 'blocked';
         await db.collection('users').updateOne(
           { telegramId: userId },
           { $set: { isBlocked } }
@@ -88,7 +85,7 @@ export default async function handler(request: Request) {
         const token = process.env.TELEGRAM_BOT_TOKEN;
         
         let query = {};
-        let collectionName = 'users'; // default
+        let collectionName = 'users';
 
         if (target === 'groups') {
           collectionName = 'groups';
@@ -96,9 +93,6 @@ export default async function handler(request: Request) {
         } else if (target === 'users') {
           query = { isBlocked: { $ne: true } };
         }
-        
-        // If 'all', we might need two loops. For simplicity in serverless, let's just do users here or groups.
-        // A robust implementation uses a queue. This is a simple loop with a limit.
         
         const targets = await db.collection(collectionName).find(query).limit(500).toArray();
         let sentCount = 0;
@@ -119,6 +113,23 @@ export default async function handler(request: Request) {
            }
         }
         result = { success: true, sent: sentCount };
+        break;
+      }
+
+      case 'set_webhook': {
+        const { domain } = payload;
+        const token = process.env.TELEGRAM_BOT_TOKEN;
+        
+        // Remove trailing slash if present
+        const cleanDomain = domain.replace(/\/$/, "");
+        const webhookUrl = `${cleanDomain}/api/telegram-webhook`;
+        
+        console.log(`Setting webhook to: ${webhookUrl}`);
+
+        const response = await fetch(`https://api.telegram.org/bot${token}/setWebhook?url=${webhookUrl}`);
+        const data = await response.json();
+        
+        result = data;
         break;
       }
 
